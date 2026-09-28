@@ -232,7 +232,7 @@ class _LoginPageState extends State<LoginPage> {
     }
     setState(() { _loading = true; _err = null; });
     try {
-      await Api().login(_u.text.trim(), _p.text.text);
+      await Api().login(_u.text.trim(), _p.text);
       if (mounted) {
         Navigator.pushReplacementNamed(context, "/chat");
       }
