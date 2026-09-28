@@ -1,0 +1,87 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.0'
+          channel: 'stable'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Create Flutter project
+        run: |
+          rm -rf android ios
+          flutter create . --project-name xiaozhushou --org com.yuewu --platforms android
+
+      - name: Configure AndroidManifest
+        run: |
+          python3 -c "
+          import re
+          p = 'android/app/src/main/AndroidManifest.xml'
+          m = open(p).read()
+          m = re.sub(r'android:label=\"[^\"]*\"', 'android:label=\"月悟小助手\"', m)
+          if 'usesCleartextTraffic' not in m:
+              m = m.replace('<application', '<application android:usesCleartextTraffic=\"true\"', 1)
+          if 'INTERNET' not in m:
+              m = m.replace('<manifest', '<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n    <uses-permission android:name=\"android.permission.INTERNET\"/>', 1)
+          open(p, 'w').write(m)
+          print(open(p).read())
+          "
+          echo "kotlin.compiler.execution.strategy=in-process" >> android/gradle.properties
+
+      - name: Configure Signing
+        run: |
+          cp xiaozhushou.keystore android/app/xiaozhushou.keystore
+          cat > /tmp/sign.py << 'PYEOF'
+          import os
+          base = 'android/app'
+          block = ('signingConfigs {\n'
+                   '    create("release") {\n'
+                   '        storeFile = file("xiaozhushou.keystore")\n'
+                   '        storePassword = "yuewu2024"\n'
+                   '        keyAlias = "yuewu"\n'
+                   '        keyPassword = "yuewu2024"\n'
+                   '    }\n'
+                   '}\n')
+          for fn in ['build.gradle', 'build.gradle.kts']:
+              p = os.path.join(base, fn)
+              if not os.path.exists(p): continue
+              g = open(p).read()
+              if 'create("release")' not in g:
+                  g = g.replace('buildTypes {', block + 'buildTypes {', 1)
+              g = g.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("release")')
+              g = g.replace('signingConfig = signingConfigs.debug', 'signingConfig = signingConfigs.getByName("release")')
+              g = g.replace('signingConfig signingConfigs.debug', 'signingConfig signingConfigs.release')
+              open(p, 'w').write(g)
+              print('=== patched', p, '===')
+          PYEOF
+          python3 /tmp/sign.py
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK (release)
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaozhushou-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 7
